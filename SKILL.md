@@ -1,50 +1,57 @@
 ---
 name: memory-cleanup
-description: "Détecte les entrées obsolètes, périmées ou inutiles dans la mémoire persistante de Claude (fichiers accessibles via memory_list/memory_read/memory_delete/memory_str_replace) et les propose à l'utilisateur pour suppression, sans jamais rien supprimer sans confirmation explicite item par item. À utiliser dès que l'utilisateur demande de nettoyer, auditer, faire le tri dans, ou vérifier sa mémoire, mentionne des infos périmées, stale ou dépassées que Claude aurait gardées, ou demande ce que Claude sait qui pourrait ne plus être à jour, même formulé de façon informelle (\"check ta mémoire\", \"y'a des trucs à virer ?\", \"fais du ménage\"). Ne PAS utiliser ce skill pour supprimer quoi que ce soit de sa propre initiative — la détection et la proposition sont automatiques, la suppression ne l'est jamais."
-compatibility: "memory_list, memory_read, memory_delete, memory_str_replace (mémoire persistante de l'app Claude / claude.ai). ask_user_input_v0 recommandé pour la phase de proposition sur mobile/claude.ai, sinon liste texte et question explicite."
+description: "Détecte les entrées obsolètes, périmées ou inutiles dans la mémoire persistante d'un agent Claude — claude.ai, Claude Code, Codex, ou tout agent avec une couche de mémoire long-terme — et les propose à l'utilisateur pour suppression, sans jamais rien supprimer sans confirmation explicite item par item. À utiliser dès que l'utilisateur demande de nettoyer, auditer, faire le tri dans, ou vérifier sa mémoire, mentionne des infos périmées, stale ou dépassées que l'agent aurait gardées, ou demande ce qui pourrait ne plus être à jour, même formulé de façon informelle (\"check ta mémoire\", \"y'a des trucs à virer ?\", \"fais du ménage\"). Ne PAS utiliser ce skill pour supprimer quoi que ce soit de sa propre initiative — la détection et la proposition sont automatiques, la suppression ne l'est jamais."
+compatibility: "N'importe quel agent Claude (ou compatible) ayant accès en lecture/écriture à sa propre mémoire persistante — claude.ai (tools memory_*), Claude Code (CLAUDE.md + auto memory), Codex (AGENTS.md + mémoire persistante), ou une couche mémoire tierce installée. Ne code aucun chemin ni nom de tool en dur : s'appuie sur ce que l'environnement d'exécution expose réellement au moment où il tourne."
 ---
 
 # Memory Cleanup
 
-Nettoie la mémoire persistante de Claude — pas le CLAUDE.md de Claude Code, ni un fichier mémoire de projet. Spécifiquement les fichiers accessibles via `memory_list` / `memory_read` / `memory_delete` / `memory_str_replace` / `memory_append` dans l'app Claude / claude.ai.
+Détecte les entrées obsolètes, périmées ou inutiles dans la mémoire persistante d'un agent — et les propose à l'utilisateur pour suppression. Ne supprime jamais rien de sa propre initiative.
 
 ## Règle absolue
 
-**Ne jamais appeler `memory_delete`, ni retirer une ligne via `memory_str_replace`, sans confirmation explicite de l'utilisateur pour cet item précis.** La détection de candidats et leur proposition sont automatiques dès que ce skill se déclenche. La suppression ne l'est jamais — même si l'utilisateur a déjà validé une suppression similaire plus tôt dans la conversation, et même si la demande qui déclenche le skill semble déjà être un feu vert général ("nettoie tout ce qui traîne") : ça vaut confirmation du principe, pas des items précis tant qu'ils n'ont pas été listés.
+**Ne jamais supprimer ou modifier une entrée de mémoire sans confirmation explicite de l'utilisateur pour cet item précis.** La détection et la proposition sont automatiques dès que ce skill se déclenche. La suppression ne l'est jamais — même après un feu vert général en début d'échange : ça vaut confirmation du principe, pas des items précis tant qu'ils n'ont pas été listés un par un.
+
+## Où vit la mémoire ici ?
+
+Identifie d'abord ton environnement — tu sais déjà comment lister, lire et éditer ta propre mémoire dans cet environnement précis, et cette mécanique change plus vite que ce skill ne pourrait la documenter correctement :
+
+- Claude.ai / app Claude → tools memory_list / memory_read / memory_delete / memory_str_replace.
+- Claude Code → CLAUDE.md et l'auto memory (`/memory` pour naviguer, tools fichier standards pour éditer).
+- Codex → AGENTS.md et son répertoire de mémoire persistante.
+- Tout autre agent avec une couche mémoire installée (MCP tiers, etc.) → ses tools propres de liste/lecture/suppression.
+- Aucune mémoire persistante native détectée dans cet environnement (ex. Cursor sans couche tierce) → dis-le à l'utilisateur, ne fabrique rien à nettoyer.
+
+Ne code jamais en dur un chemin de fichier ou un nom de commande précis dans ce skill — utilise ce que ton environnement expose réellement au moment où tu tournes.
 
 ## Phase 1 — Détection
 
-1. `memory_list()` avec `include_preview: true` : chemin, taille, date de dernière modif et aperçu de chaque fichier.
-2. Calculer l'ancienneté de chaque fichier (jours depuis la dernière modif, par rapport à la date du jour — `user_time_v0` si besoin).
-3. Trier par ancienneté décroissante. Un fichier n'est un candidat que s'il est nettement plus ancien que le reste du corpus — pas de seuil fixe universel (30/60/90 jours selon les gens) : comparer à la distribution réelle des autres fichiers de cette mémoire, pas à un chiffre absolu.
-4. L'ancienneté seule est un signal faible, pas une preuve. Avant de proposer quoi que ce soit :
-   - `/profile.md` et la plupart des `/topics/` bougent rarement par nature (identité, goûts, habitudes stables) — être vieux n'y est PAS un signal de péremption. Ne pas les proposer par défaut sur ce seul critère.
-   - `/areas/` (projets, tâches en cours) est le dossier où l'ancienneté est le signal le plus fiable, surtout si le contenu décrit un état "en cours" ou "à faire" qui semble figé depuis longtemps.
-   - Lire le contenu complet des candidats potentiels (`memory_read`, pas juste l'aperçu) avant de les proposer, pour juger si le sujet semble abandonné, remplacé par autre chose, ou explicitement clos — pas juste vieux.
-   - Croiser avec la conversation en cours : un pivot, un abandon ou un changement mentionné récemment renforce nettement le signal.
-5. Construire une courte liste de candidats — 4 à 6 maximum par lot pour rester lisible — avec pour chacun : le nom du fichier, un résumé d'une ligne de ce qu'il contient, et depuis quand il n'a pas bougé.
+1. Liste l'ensemble de ta mémoire persistante et l'ancienneté de chaque entrée (depuis quand elle n'a pas bougé).
+2. Trie par ancienneté décroissante. Un candidat n'en est un que s'il est nettement plus ancien que le reste du corpus — pas de seuil fixe universel : compare à la distribution réelle de cette mémoire précise, pas à un chiffre absolu.
+3. L'ancienneté seule est un signal faible, pas une preuve. Avant de proposer quoi que ce soit :
+   - Identité, préférences stables, habitudes bougent rarement par nature — être vieux n'y est PAS un signal de péremption.
+   - Un projet ou une tâche en cours est le type d'entrée où l'ancienneté est le signal le plus fiable, surtout si le contenu décrit un état "en cours" ou "à faire" qui semble figé depuis longtemps.
+   - Lis le contenu complet des candidats potentiels avant de les proposer — pas juste un résumé — pour juger si le sujet semble abandonné, remplacé par autre chose, ou explicitement clos, pas juste vieux.
+   - Croise avec la conversation en cours : un pivot, un abandon ou un changement mentionné récemment renforce nettement le signal.
+4. Construis une courte liste de candidats — 4 à 6 maximum par lot pour rester lisible — avec pour chacun : de quoi il s'agit en une ligne, et depuis quand il n'a pas bougé.
 
 ## Phase 2 — Proposition
 
-6. Présenter les candidats, jamais les supprimer directement.
-   - Sur claude.ai / app mobile : `ask_user_input_v0` en `multi_select` est l'outil naturel (max 4 options par question, jusqu'à 3 questions) — l'utilisateur coche ce qu'il veut vraiment supprimer.
-   - Ailleurs (pas d'accès à cet outil) : une liste numérotée en texte avec une question explicite ("Lesquels de ces fichiers veux-tu que je supprime ?").
-7. Plus de 4 candidats → répartir sur plusieurs questions plutôt que tronquer la liste silencieusement.
-8. Une réponse vague ("oui nettoie tout", "vas-y") sur une liste qui n'a pas encore été présentée précisément n'est pas une confirmation valable pour la suppression — présenter d'abord la liste exacte, confirmer ensuite item par item.
+5. Présente les candidats, jamais ne les supprime directement. Adapte-toi au canal disponible : options tappables si l'environnement le permet, sinon une liste numérotée avec une question explicite ("Lesquels veux-tu que je supprime ?").
+6. Plus de candidats que ce que le canal affiche proprement → répartis en plusieurs lots plutôt que de tronquer silencieusement.
+7. Une réponse vague ("nettoie tout", "vas-y") sur une liste qui n'a pas encore été présentée précisément n'est pas une confirmation valable pour la suppression — présente d'abord la liste exacte, confirme ensuite item par item.
 
 ## Phase 3 — Exécution
 
-9. Pour chaque item confirmé par l'utilisateur :
-   - Fichier entier à supprimer → `memory_read` (si la version en main date d'avant cette conversation ou est incertaine) puis `memory_delete(path, if_version)`.
-   - Une ligne précise dans un fichier à garder par ailleurs → `memory_str_replace` pour retirer uniquement cette ligne, pas tout le fichier.
-10. Vérifier les références croisées : d'autres fichiers peuvent contenir un lien `[[nom-du-sujet-supprimé]]` ou juste le mentionner en passant (souvent dans un fichier fourre-tout type `/topics/recent-work.md`). Relire les fichiers plausibles et retirer les lignes qui ne parlent plus QUE du sujet supprimé — pas celles qui le mentionnent incidemment dans un contexte encore pertinent par ailleurs.
-11. Confirmer à l'utilisateur ce qui a été supprimé, fichier par fichier, en une réponse courte. Pas de récap superflu — juste la confirmation de ce qui a changé.
+8. Ne supprime ou ne modifie que ce qui a été confirmé, avec les moyens d'édition natifs de ton environnement.
+9. Vérifie les références croisées : d'autres entrées peuvent mentionner ou lier ce qui vient d'être supprimé, souvent dans une note fourre-tout type "activité récente". Retire les lignes qui ne parlent plus QUE du sujet supprimé — pas celles qui le mentionnent incidemment dans un contexte encore pertinent par ailleurs.
+10. Confirme ce qui a été supprimé en une réponse courte. Pas de récap superflu — juste ce qui a changé.
 
 ## Exemple de déroulé complet
 
-- `memory_list()` → 15 fichiers, dont 6 dans `/areas/` et `/people/` non modifiés depuis 3 à 5 semaines pendant que le reste du corpus tourne activement.
-- Lecture complète de ces 6 → certains sont des projets logiciels concrets à l'arrêt apparent, un autre est une personne (co-fondateur) liée à une évaluation d'idée déjà tranchée. Candidats retenus.
-- Proposition via `ask_user_input_v0` (multi_select, 4 options max par question).
-- L'utilisateur confirme une liste précise → `memory_delete` sur chacun, en relisant d'abord ceux dont la version en main n'est plus fraîche.
-- Vérification croisée : un fichier `/topics/recent-work.md` mentionnait deux des sujets supprimés en passant, via des liens `[[...]]`. Ces deux lignes précises sont retirées avec `memory_str_replace` ; le reste du fichier reste intact.
+- Liste de la mémoire → une quinzaine d'entrées, dont six nettement plus anciennes que le reste du corpus pendant qu'il tourne activement.
+- Lecture complète de ces six → certaines décrivent des projets concrets à l'arrêt apparent, une autre une personne liée à une évaluation déjà tranchée. Candidats retenus.
+- Proposition à l'utilisateur, jamais de suppression directe.
+- Confirmation d'une liste précise → suppression de chaque item confirmé.
+- Vérification croisée : une note fourre-tout mentionnait deux des sujets supprimés en passant. Ces lignes précises sont retirées, le reste de la note reste intact.
 - Confirmation finale en une réponse courte : quoi a été supprimé, quoi a été vérifié et laissé tel quel.

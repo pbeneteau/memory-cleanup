@@ -1,10 +1,14 @@
 # memory-cleanup
 
-A Claude skill that audits Claude's persistent memory for stale, outdated, or superseded entries — and proposes them for deletion instead of removing anything on its own.
+A Claude skill that audits an agent's persistent memory for stale, outdated, or superseded entries — and proposes them for deletion instead of removing anything on its own. Works wherever an agent has read/write access to its own long-term memory: claude.ai, Claude Code, Codex, or any other agent with a memory layer installed.
 
 ## Why
 
-Persistent memory in Claude accumulates facts about abandoned projects, dead ideas, and outdated status the same way any long-running system accumulates cruft. Nothing expires on its own, so it just sits there.
+Persistent memory accumulates facts about abandoned projects, dead ideas, and outdated status the same way any long-running system accumulates cruft. Nothing expires on its own, so it just sits there.
+
+## Portability
+
+The skill deliberately doesn't hardcode any file path or tool name — those differ by platform and change between versions. It states the policy (how to judge staleness, never delete without confirmation) and leaves the mechanics (how to list/read/edit memory in the current environment) to the agent running it, which already knows its own environment.
 
 ## What it does
 
